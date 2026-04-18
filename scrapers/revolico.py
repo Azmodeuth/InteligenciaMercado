@@ -6,6 +6,7 @@ SCRAPER REVOLICO V41.0 - DESCRIPCIONES COMPLETAS (GRAPHQL + HTML FALLBACK)
 - Si falla, hace scraping del HTML de la página del anuncio
 - Extrae descripción completa, teléfono, ubicación
 - Máxima compatibilidad con el negocio
+- OPTIMIZACIÓN NUBE: Calentamiento de sesión y bypass de Cloudflare para servidores
 """
 from curl_cffi import requests
 from bs4 import BeautifulSoup
@@ -21,7 +22,7 @@ MAX_PRODUCTOS = 1000
 MAX_HILOS = 12
 REQUEST_TIMEOUT = 30
 
-# Headers para GraphQL (Apollo)
+# Headers para GraphQL (Apollo) - REFORZADOS PARA NUBE
 HEADERS_APOLLO = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "*/*",
@@ -29,6 +30,9 @@ HEADERS_APOLLO = {
     "Origin": "https://www.revolico.com",
     "Referer": "https://www.revolico.com/",
     "X-Client-Info": "apollo-client/4.1.6",
+    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
 }
 
 # Headers para HTML
@@ -37,6 +41,7 @@ HEADERS_HTML = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "es-ES,es;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
 }
 
 # Estado global
@@ -305,7 +310,7 @@ def obtener_descripciones_batch(session, articulos):
 
 
 def obtener_precios_revolico(producto_original=None, categoria=None, subcategoria=None, productos_predefinidos=None, paginas=15) -> list:
-    """Función principal - V41 con descripciones completas."""
+    """Función principal - V41 con descripciones completas (Optimización Nube)."""
     
     # Resetear estado
     estado_global['graphql_fallos'] = 0
@@ -322,10 +327,17 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
     ids_vistos = set()
     
     print("\n" + "═" * 80)
-    print(f"║ ⚡ REVOLICO V41.0 - DESCRIPCIONES COMPLETAS (GRAPHQL + HTML) ".center(78) + "║")
+    print(f"║ ⚡ REVOLICO V41.0 - DESCRIPCIONES COMPLETAS (OPTIMIZACIÓN NUBE) ".center(78) + "║")
     print("═" * 80 + "\n")
     
     with requests.Session() as session:
+        # --- CALENTAMIENTO DE SESIÓN (Vital para servidores en la nube) ---
+        # Entramos a la home primero para obtener cookies de Cloudflare y simular navegación humana
+        try:
+            session.get("https://www.revolico.com/", headers=HEADERS_HTML, impersonate="chrome120", timeout=15)
+            time.sleep(random.uniform(1.2, 2.5)) 
+        except: pass
+
         # ============================================
         # FASE 1: OBTENER LISTADO DE ANUNCIOS
         # ============================================
@@ -354,6 +366,10 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                     timeout=REQUEST_TIMEOUT
                 )
                 
+                # Debug de estatus en Logs para monitoreo
+                if p_num == 1:
+                    print(f"   [DEBUG] Revolico Page 1 Status: {r.status_code}")
+
                 if r.status_code != 200:
                     continue
                 
@@ -411,8 +427,8 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                 
                 print(f"   📥 Pág {p_num}: {len(ads)} anuncios | Total: {len(articulos_base)}")
                 
-                # Pausa entre páginas
-                time.sleep(0.3)
+                # Pausa aleatoria entre páginas para evitar detección en nube
+                time.sleep(random.uniform(0.6, 1.4))
                 
             except Exception as e:
                 print(f"   ⚠️ Error en página {p_num}: {str(e)[:50]}")
