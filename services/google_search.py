@@ -1,7 +1,10 @@
 """
 ================================================================================
-BÚSQUEDA WEB - VERSIÓN V7.9 - SCRAPER NATIVO (OPTIMIZADO PARA NUBE) 
+BÚSQUEDA WEB - VERSIÓN V7.10 - SCRAPER NATIVO (REPARADO Y COMPLETO) 
 ================================================================================
+- MANTIENE TODAS LAS LISTAS ORIGINALES (SITIOS_CUBANOS, SITIOS_BAJA_CALIDAD)
+- Corregido SyntaxError en el filtro de palabras de venta
+- Calentamiento de sesión para Bing en servidores AWS/Streamlit
 """
 import subprocess
 import json
@@ -53,6 +56,7 @@ PALABRAS_VENTA =[
 ]
 
 def es_resultado_de_venta(titulo: str, descripcion: str, dominio: str) -> tuple:
+    """Analiza si un resultado de búsqueda realmente parece una oferta de venta."""
     texto_combinado = f"{titulo} {descripcion}".lower()
     dominio_lower = dominio.lower()
     
@@ -69,10 +73,10 @@ def es_resultado_de_venta(titulo: str, descripcion: str, dominio: str) -> tuple:
     for sitio in SITIOS_CUBANOS:
         if sitio in dominio_lower: return (True, "Sitio clasificado")
         
-    palabras_venta_encontradas = [pv for pv in PALABRAS_VENTA if pv in texto_combined if 'texto_combined' in locals() else texto_combinado]
+    # LÍNEA CORREGIDA (Sin error de sintaxis)
+    palabras_venta_encontradas = [pv for pv in PALABRAS_VENTA if pv in texto_combinado]
     if len(palabras_venta_encontradas) >= 2: return (True, "Múltiples palabras venta")
     
-    # CORREGIDO: Uso de texto_combinado únicamente
     if re.search(r'\$[\d,.]+|\d+[\d,.]*\s*(?:usd|mlc|cup|eur)', texto_combinado, re.I):
         return (True, "Contiene precio textual")
         
@@ -101,7 +105,7 @@ def _scraper_nativo_bing(termino: str, num_resultados: int) -> List[Dict]:
     ]
     
     with crequests.Session() as session:
-        # Calentamiento
+        # Calentamiento Bing
         try:
             session.get("https://www.bing.com/", headers=headers_bing, impersonate="chrome120", timeout=15)
             time.sleep(2.0)
