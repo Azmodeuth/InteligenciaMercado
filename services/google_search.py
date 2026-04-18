@@ -1,11 +1,10 @@
 """
 ================================================================================
-BÚSQUEDA WEB - VERSIÓN V7.4 - SCRAPER NATIVO (ULTRA BYPASS PARA NUBE) 
+BÚSQUEDA WEB - VERSIÓN V7.6 - SCRAPER NATIVO (BYPASS CLOUDFLARE) 
 ================================================================================
-- Corregido error de variable local 'texto_combined'
-- Calentamiento de sesión específico para Bing en servidores AWS/Streamlit
-- Rotación de cabeceras de navegación real
-- Máxima compatibilidad con el sistema de filtrado de ventas
+- Corregido error de variable 'texto_combined'
+- Calentamiento de sesión para Bing en servidores
+- Recuperadas todas las listas originales de sitios y palabras clave
 """
 import subprocess, json, logging, urllib.parse, re, shutil, time, random
 from bs4 import BeautifulSoup
@@ -50,7 +49,6 @@ PALABRAS_VENTA =[
 ]
 
 def es_resultado_de_venta(titulo: str, descripcion: str, dominio: str) -> tuple:
-    """Analiza si un resultado de búsqueda realmente parece una oferta de venta."""
     texto_combinado = f"{titulo} {descripcion}".lower()
     dominio_lower = dominio.lower()
     
@@ -70,7 +68,7 @@ def es_resultado_de_venta(titulo: str, descripcion: str, dominio: str) -> tuple:
     palabras_venta_encontradas = [pv for pv in PALABRAS_VENTA if pv in texto_combinado]
     if len(palabras_venta_encontradas) >= 2: return (True, "Múltiples palabras venta")
     
-    # CORRECCIÓN DE VARIABLE: Aseguramos el uso de texto_combinado únicamente
+    # CORREGIDO: Se usa texto_combinado (antes texto_combined)
     if re.search(r'\$[\d,.]+|\d+[\d,.]*\s*(?:usd|mlc|cup|eur)', texto_combinado, re.I):
         return (True, "Contiene precio textual")
         
@@ -85,21 +83,12 @@ def _scraper_nativo_bing(termino: str, num_resultados: int) -> List[Dict]:
     resultados =[]
     urls_vistas = set()
     
-    # Identidades rotativas para el servidor
-    agentes = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ]
-
     headers_bing = {
-        "User-Agent": random.choice(agentes),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9",
         "Referer": "https://www.bing.com/",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
+        "Connection": "keep-alive"
     }
 
     terminos_busqueda =[
@@ -108,28 +97,20 @@ def _scraper_nativo_bing(termino: str, num_resultados: int) -> List[Dict]:
     ]
     
     with crequests.Session() as session:
-        # --- CALENTAMIENTO DE SESIÓN BING ---
+        # Calentamiento Bing
         try:
-            # Entramos primero a Bing para obtener cookies de sesión
-            session.get("https://www.bing.com/", headers=headers_bing, impersonate="chrome120", timeout=15)
-            time.sleep(random.uniform(2.0, 3.5))
-        except Exception as e:
-            logger.warning(f"Error calentando Bing: {e}")
+            session.get("https://www.bing.com/", headers=headers_bing, impersonate="chrome120", timeout=10)
+            time.sleep(random.uniform(1.5, 2.5))
+        except: pass
 
         for term in terminos_busqueda:
             for intento in range(2): 
                 try:
                     url = f"https://www.bing.com/search?q={urllib.parse.quote(term)}"
                     r = session.get(url, headers=headers_bing, impersonate="chrome120", timeout=45)
-                    
-                    if r.status_code != 200:
-                        logger.warning(f"[DEBUG] Bing Status: {r.status_code} para '{term}'")
-                        time.sleep(3)
-                        continue
+                    if r.status_code != 200: continue
 
                     soup = BeautifulSoup(r.text, 'html.parser')
-                    anuncios_encontrados = 0
-                    
                     for li in soup.find_all('li', class_='b_algo'):
                         h2 = li.find('h2')
                         if not h2: continue
@@ -144,7 +125,6 @@ def _scraper_nativo_bing(termino: str, num_resultados: int) -> List[Dict]:
                         if link and link not in urls_vistas:
                             try: dominio = urllib.parse.urlparse(link).netloc.lower()
                             except: dominio = ""
-                            
                             if any(exc in dominio or exc in link.lower() for exc in SITIOS_EXCLUIDOS): continue
                             
                             es_venta, motivo = es_resultado_de_venta(titulo, descripcion, dominio)
@@ -156,17 +136,10 @@ def _scraper_nativo_bing(termino: str, num_resultados: int) -> List[Dict]:
                                     "dominio": dominio, "fecha": "", "es_cubano": es_cubano,
                                     "prioridad": 3 if es_cubano else 2
                                 })
-                                anuncios_encontrados += 1
-                    
-                    if anuncios_encontrados > 0:
-                        break # Si encontramos resultados en este término, pasamos al siguiente término
-                
+                    break 
                 except Exception as e:
                     logger.warning(f"Error en Bing (Intento {intento+1}): {e}")
-                    time.sleep(random.uniform(2.0, 4.0))
-            
-            # Pausa entre términos de búsqueda
-            time.sleep(random.uniform(1.0, 2.5))
+                    time.sleep(random.uniform(1.5, 3.0))
             
     return resultados
 
@@ -176,7 +149,6 @@ def buscar_en_google(termino: str, num_resultados: int = 15) -> List[Dict]:
     todos_resultados =[]
     urls_vistas = set()
     
-    # Respetamos el sistema z-ai si existe en el entorno
     if shutil.which('z-ai'):
         try:
             cmd =["z-ai", "function", "-n", "web_search", "-a", json.dumps({"query": f"{termino} Cuba venta precio", "num": 15})]
@@ -194,10 +166,8 @@ def buscar_en_google(termino: str, num_resultados: int = 15) -> List[Dict]:
                             "dominio": item.get("host_name", "").lower(),
                             "prioridad": 2
                         })
-        except Exception:
-            pass
+        except Exception: pass
             
-    # Fallback al Scraper Nativo optimizado para Nube
     if not todos_resultados:
         todos_resultados = _scraper_nativo_bing(termino, num_resultados)
         
@@ -208,11 +178,9 @@ def buscar_google_directo(termino: str, num_resultados: int = 15) -> List[Dict]:
     return buscar_en_google(termino, num_resultados)
 
 def convertir_google_a_articulo(resultado: dict, termino: str, categoria: str = "electrodomesticos") -> dict:
-    """Convierte el formato crudo de buscador al formato de artículo del sistema."""
     descripcion = resultado.get("descripcion", "")
     titulo = resultado.get("titulo", "Sin título")
     dominio = resultado.get("dominio", "")
-    
     if not descripcion: descripcion = f"{titulo} - Fuente: {dominio}" if dominio else titulo
     elif dominio: descripcion = f"{descripcion} | Fuente: {dominio}"
     
