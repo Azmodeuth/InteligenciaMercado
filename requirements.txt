@@ -1,0 +1,92 @@
+# ==============================================================================
+# REVOLICO PRICE INTELLIGENCE - DEPENDENCIAS COMPLETAS
+# ==============================================================================
+# Proyecto: Inteligencia de Mercado para Clasificados Cubanos
+# Fuentes: Revolico, Voypati, El Yerro, Fadiar, Porlalivre, Google/Bing
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# SCRAPING Y HTTP
+# ------------------------------------------------------------------------------
+# curl_cffi: Cliente HTTP con impersonación de navegador (evita detección bot)
+# Requerido para: scrapers/revolico.py, scrapers/multi_fuente.py, services/google_search.py
+curl_cffi>=0.5.10
+
+# beautifulsoup4: Parsing de HTML
+# Requerido para: scrapers/revolico.py, scrapers/multi_fuente.py, services/google_search.py
+beautifulsoup4>=4.12.0
+
+# ------------------------------------------------------------------------------
+# PROCESAMIENTO DE DATOS
+# ------------------------------------------------------------------------------
+# pandas: Manipulación de datos y DataFrames
+# Requerido para: dashboard.py, database/db.py, ui/components.py, pages/*.py
+pandas>=2.0.0
+
+# numpy: Cálculos numéricos y estadísticas
+# Requerido para: core/analysis.py, pages/*.py
+numpy>=1.24.0
+
+# ------------------------------------------------------------------------------
+# DASHBOARD Y VISUALIZACIÓN
+# ------------------------------------------------------------------------------
+# streamlit: Framework de dashboard interactivo
+# Requerido para: dashboard.py, pages/*.py, services/search_service.py, ui/components.py
+streamlit>=1.32.0
+
+# plotly: Gráficos interactivos
+# Requerido para: dashboard.py, ui/components.py, pages/*.py
+plotly>=5.15.0
+
+# altair: Visualización declarativa (usado por Streamlit)
+altair>=5.0.0
+
+# ------------------------------------------------------------------------------
+# UTILIDADES
+# ------------------------------------------------------------------------------
+# python-dateutil: Manejo de fechas
+# Requerido para: operaciones de fecha en varios módulos
+python-dateutil>=2.8.0
+
+# pytz: Zonas horarias
+# Requerido para: manejo de zonas horarias
+pytz>=2023.0
+
+# ------------------------------------------------------------------------------
+# DEPENDENCIAS ADICIONALES (instaladas automáticamente)
+# ------------------------------------------------------------------------------
+# Las siguientes dependencias se instalan automáticamente con los paquetes
+# principales, pero se listan aquí para referencia:
+#
+# - tornado>=6.4      (requerido por streamlit)
+# - watchdog          (requerido por streamlit para auto-reload)
+# - pillow            (requerido por streamlit para imágenes)
+# - click             (requerido por streamlit CLI)
+# - rich              (requerido por streamlit para output formateado)
+# - typing-extensions (requerido para typing avanzado)
+# - requests          (backup para peticiones HTTP simples)
+# - charset-normalizer (normalización de encoding)
+# - idna              (manejo de IDNs en URLs)
+# - urllib3           (pooling de conexiones HTTP)
+# - certifi           (certificados SSL)
+# - soupsieve         (selectores CSS para BeautifulSoup)
+
+# ------------------------------------------------------------------------------
+# NOTAS DE INSTALACIÓN
+# ------------------------------------------------------------------------------
+# Instalación completa:
+#   pip install -r requirements.txt
+#
+# Si hay problemas con curl_cffi en Windows, instalar:
+#   pip install curl_cffi --no-binary :all:
+#
+# Para desarrollo:
+#   pip install -r requirements.txt
+#   streamlit run dashboard.py
+#
+# ------------------------------------------------------------------------------
+# VERSIONES COMPATIBLES
+# ------------------------------------------------------------------------------
+# Python: 3.8, 3.9, 3.10, 3.11, 3.12
+# SO: Windows 10/11, Linux, macOS
+# ==============================================================================
