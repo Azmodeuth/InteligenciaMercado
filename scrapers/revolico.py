@@ -1,6 +1,6 @@
 """
 ================================================================================
-SCRAPER REVOLICO V41.7 - DESCRIPCIONES COMPLETAS (GRAPHQL + HTML FALLBACK)
+SCRAPER REVOLICO V41.9 - DESCRIPCIONES COMPLETAS (GRAPHQL + HTML FALLBACK)
 ================================================================================
 - Intenta GraphQL primero para descripciones
 - Si falla, hace scraping del HTML de la página del anuncio
@@ -19,11 +19,10 @@ from core.currency import normalizar_moneda, convertir_a_usd
 
 # Configuración
 MAX_PRODUCTOS = 1000
-# REDUCIDO PARA EVITAR BLOQUEO MASIVO EN SERVIDOR
-MAX_HILOS = 3 
+MAX_HILOS = 12
 REQUEST_TIMEOUT = 30
 
-# Headers para GraphQL (Apollo) - REFORZADOS PARA NUBE
+# Headers para GraphQL (Apollo)
 HEADERS_APOLLO = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "*/*",
@@ -81,6 +80,60 @@ def obtener_descripcion_graphql(session, anuncio_id):
                 if desc:
                     desc = re.sub(r'\s+', ' ', desc).strip()
                     return f"{desc} | Tel: {phone}" if phone else desc
+        return None
+    except:
+        return None
+    """Intenta obtener descripción vía GraphQL."""
+    try:
+        payload = [{
+            "operationName": "AdDetail",
+            "variables": {"id": anuncio_id},
+            "extensions": {"clientLibrary": {"name": "@apollo/client", "version": "4.1.6"}},
+            "query": QUERY_DETALLE_ANUNCIO
+        }]
+        
+        r = session.post(
+            REVOLICO_API_URL, 
+            headers=HEADERS_APOLLO, 
+            json=payload, 
+            impersonate="chrome120", 
+            timeout=REQUEST_TIMEOUT
+        )
+        
+        if r.status_code == 200:
+            data = r.json()
+            res = data[0] if isinstance(data, list) else data
+            
+            # Verificar si hay errores
+            if 'errors' in res:
+                return None
+            
+            ad = res.get('data', {}).get('ad', {})
+            
+            if ad:
+                # Extraer descripción (body o description)
+                descripcion = ad.get('body') or ad.get('description') or ""
+                
+                # Extraer teléfono
+                phone_info = ad.get('phoneInfo', {})
+                first_phone = phone_info.get('firstPhone', {})
+                telefono = first_phone.get('number', '')
+                
+                # Limpiar descripción HTML
+                if descripcion:
+                    descripcion = re.sub(r'<[^>]+>', ' ', str(descripcion))
+                    descripcion = re.sub(r'\s+', ' ', descripcion).strip()
+                
+                # Construir resultado
+                partes = []
+                if descripcion and len(descripcion) > 10:
+                    partes.append(descripcion)
+                if telefono:
+                    partes.append(f"Tel: {telefono}")
+                
+                if partes:
+                    return ' | '.join(partes)
+        
         return None
     except:
         return None
@@ -142,14 +195,18 @@ def obtener_descripcion_html(session, anuncio_id, permalink):
                     break
 
         # --- EXTRACCIÓN DE DATOS DE CONTACTO ADICIONALES ---
+        # Si no hay teléfono en la descripción, lo buscamos en el HTML
         if "Tel:" not in descripcion_final:
+            # Buscar patrones de 8 dígitos que empiecen con 5 o 6 (Cuba)
             tels = re.findall(r'5\d{7}|6\d{7}', r.text)
             if tels: extras.append(f"Tel: {tels[0]}")
         
+        # Ubicación (suele estar en un span con clase location)
         ubi = soup.select_one('span[class*="Location"], div[class*="location"]')
         if ubi: extras.append(f"Ubicación: {ubi.get_text(strip=True)}")
 
         if descripcion_final:
+            # Limpiar HTML y espacios
             descripcion_final = re.sub(r'<[^>]+>', ' ', str(descripcion_final))
             descripcion_final = re.sub(r'\s+', ' ', descripcion_final).strip()
             
@@ -164,14 +221,18 @@ def obtener_descripcion_html(session, anuncio_id, permalink):
 
 def obtener_descripcion_completa(session, anuncio_id, permalink):
     """Obtiene descripción: GraphQL primero, HTML fallback."""
+    
+    # Verificar si ya debemos usar HTML
     with estado_global['lock']:
         usar_html = estado_global['usar_html']
     
+    # Intentar GraphQL primero
     if not usar_html:
         desc = obtener_descripcion_graphql(session, anuncio_id)
         if desc:
             return (anuncio_id, desc, "graphql")
         
+        # Incrementar fallos
         with estado_global['lock']:
             estado_global['graphql_fallos'] += 1
             if estado_global['graphql_fallos'] >= 5 and not estado_global['mensaje_impreso']:
@@ -180,8 +241,7 @@ def obtener_descripcion_completa(session, anuncio_id, permalink):
                 with print_lock:
                     print(f"\n   ⚠️ GraphQL bloqueado → Usando HTML para descripciones\n")
     
-    # Delay pequeño para no ser detectado en batch
-    time.sleep(random.uniform(0.5, 1.5))
+    # Fallback a HTML
     desc = obtener_descripcion_html(session, anuncio_id, permalink)
     if desc:
         return (anuncio_id, desc, "html")
@@ -190,14 +250,17 @@ def obtener_descripcion_completa(session, anuncio_id, permalink):
 
 
 def obtener_descripciones_batch(session, articulos):
-    """Procesa descripciones en paralelo (Velocidad reducida para Nube)."""
+    """Procesa descripciones en paralelo."""
     if not articulos:
         return {}
     
     descripciones = {}
     total = len(articulos)
     
-    print(f"\n   📝 EXTRAYENDO DESCRIPCIONES (Modo Seguro: {MAX_HILOS} hilos)")
+    print(f"\n   {'═' * 60}")
+    print(f"   📝 EXTRAYENDO DESCRIPCIONES ({MAX_HILOS} hilos)")
+    print(f"   📊 Total: {total} anuncios")
+    print(f"   {'═' * 60}\n")
     
     contadores['exitosos'] = 0
     contadores['fallidos'] = 0
@@ -209,7 +272,6 @@ def obtener_descripciones_batch(session, articulos):
         permalink = art.get('permalink', '')
         return obtener_descripcion_completa(session, aid, permalink)
     
-    # Usar menos hilos para que Cloudflare no nos banee la IP del servidor
     with ThreadPoolExecutor(max_workers=MAX_HILOS) as executor:
         futuros = {executor.submit(procesar_uno, art): art for art in articulos}
         
@@ -230,9 +292,19 @@ def obtener_descripciones_batch(session, articulos):
                 with contadores['lock']:
                     contadores['fallidos'] += 1
             
-            if procesados % 50 == 0:
+            if procesados % 100 == 0:
+                pct = (contadores['exitosos'] / procesados * 100) if procesados > 0 else 0
                 with print_lock:
-                    print(f"   📊 {procesados}/{total} procesados...")
+                    print(f"   📊 {procesados}/{total} | ✅ {contadores['exitosos']} ({pct:.0f}%) | ❌ {contadores['fallidos']} | GQL:{metodos['graphql']} HTML:{metodos['html']}")
+    
+    pct = (contadores['exitosos'] / total * 100) if total > 0 else 0
+    print(f"\n   {'═' * 60}")
+    print(f"   📊 RESUMEN DESCRIPCIONES")
+    print(f"   {'═' * 60}")
+    print(f"   ✅ Exitosos: {contadores['exitosos']}/{total} ({pct:.1f}%)")
+    print(f"   ❌ Fallidos: {contadores['fallidos']}/{total}")
+    print(f"   📊 Por método: GraphQL={metodos['graphql']} | HTML={metodos['html']}")
+    print(f"   {'═' * 60}\n")
     
     return descripciones
 
@@ -240,6 +312,7 @@ def obtener_descripciones_batch(session, articulos):
 def obtener_precios_revolico(producto_original=None, categoria=None, subcategoria=None, productos_predefinidos=None, paginas=15) -> list:
     """Función principal - V41.0 con descripciones completas (Optimización Nube)."""
     
+    # Resetear estado
     estado_global['graphql_fallos'] = 0
     estado_global['usar_html'] = False
     estado_global['mensaje_impreso'] = False
@@ -254,20 +327,24 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
     ids_vistos = set()
     
     print("\n" + "═" * 80)
-    print(f"║ ⚡ REVOLICO V41.7 - BYPASS CLOUDFLARE AVANZADO ".center(78) + "║")
+    print(f"║ ⚡ REVOLICO V41.0 - DESCRIPCIONES COMPLETAS (OPTIMIZACIÓN NUBE) ".center(78) + "║")
     print("═" * 80 + "\n")
     
     with requests.Session() as session:
-        # Calentamiento
+        # --- CALENTAMIENTO DE SESIÓN (Vital para servidores en la nube) ---
         try:
             session.get("https://www.revolico.com/", headers=HEADERS_HTML, impersonate="chrome120", timeout=15)
-            time.sleep(random.uniform(2.0, 3.5)) 
+            time.sleep(random.uniform(1.2, 2.5)) 
         except: pass
 
+        # ============================================
+        # FASE 1: OBTENER LISTADO DE ANUNCIOS
+        # ============================================
         for p_num in range(1, paginas + 1):
             if len(articulos_base) >= MAX_PRODUCTOS:
                 break
             
+            # --- INTENTO 1: GRAPHQL ---
             payload = [{
                 "operationName": "AdsSearch",
                 "variables": {
@@ -289,80 +366,102 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                     timeout=REQUEST_TIMEOUT
                 )
                 
-                if p_num == 1:
-                    print(f"   [DEBUG] Revolico Page 1 Status: {r.status_code}")
+                # --- INTENTO 2: RESCATE POR HTML SI HAY BLOQUEO 403 (NUBE) ---
+                if r.status_code == 403:
+                    print(f"   [RESCATE] Pág {p_num}: Bypass Cloudflare vía HTML...")
+                    r = session.get(f"https://www.revolico.com/busqueda?q={termino}&page={p_num}", headers=HEADERS_HTML, impersonate="chrome120")
+                    if r.status_code == 200:
+                        soup = BeautifulSoup(r.text, 'html.parser')
+                        next_data = soup.find('script', id='__NEXT_DATA__')
+                        if next_data:
+                            data = json.loads(next_data.string)
+                            try:
+                                ads = data['props']['pageProps']['results']
+                                for ad in ads:
+                                    aid = ad.get('id')
+                                    if not aid or aid in ids_vistos: continue
+                                    ids_vistos.add(aid)
+                                    articulos_base.append({
+                                        "id_busqueda": id_busqueda,
+                                        "producto_buscado": termino,
+                                        "titulo": ad.get('title'),
+                                        "descripcion": ad.get('description') or ad.get('title'),
+                                        "precio_original": float(ad.get('price', 0)),
+                                        "moneda_original": ad.get('currency', 'USD'),
+                                        "moneda_normalizada": normalizar_moneda(ad.get('currency')),
+                                        "precio_usd": convertir_a_usd(float(ad.get('price', 0)), normalizar_moneda(ad.get('currency'))),
+                                        "enlace": f"https://www.revolico.com{ad.get('permalink', '')}",
+                                        "fecha_extraccion": timestamp_busqueda,
+                                        "hora_extraccion": hora_busqueda,
+                                        "fecha_busqueda": fecha_busqueda,
+                                        "categoria": categoria,
+                                        "subcategoria": subcategoria,
+                                        "fuente": "revolico",
+                                        "es_online": True,
+                                        "anuncio_id": aid,
+                                        "permalink": ad.get('permalink', '')
+                                    })
+                                print(f"   📥 [HTML] Pág {p_num}: {len(ads)} anuncios extraídos")
+                                continue
+                            except: pass
 
-                if r.status_code != 200:
-                    continue
-                
-                data = r.json()
-                res_json = data[0] if isinstance(data, list) else data
-                
-                if 'errors' in res_json:
-                    continue
-                
-                ads = res_json.get('data', {}).get('adsPerPage', {}).get('edges', [])
-                
-                if not ads:
-                    break
-                
-                for ad in ads:
-                    nodo = ad.get('node', {})
-                    aid = nodo.get('id')
-                    precio = nodo.get('price')
+                # --- PROCESAMIENTO NORMAL (Si GraphQL funcionó) ---
+                if r.status_code == 200:
+                    data = r.json()
+                    res_json = data[0] if isinstance(data, list) else data
+                    ads = res_json.get('data', {}).get('adsPerPage', {}).get('edges', [])
                     
-                    if not aid or aid in ids_vistos:
-                        continue
-                    if not precio or precio <= 0:
-                        continue
+                    if not ads: break
                     
-                    ids_vistos.add(aid)
-                    
-                    # Guardar descripción básica por si falla el batch
-                    desc_listado = nodo.get('description') or ""
-                    if desc_listado:
-                        desc_listado = re.sub(r'<[^>]+>', ' ', str(desc_listado))
-                        desc_listado = re.sub(r'\s+', ' ', desc_listado).strip()
-                    
-                    articulos_base.append({
-                        "id_busqueda": id_busqueda,
-                        "producto_buscado": termino,
-                        "titulo": nodo.get('title', 'Sin título'),
-                        "descripcion": desc_listado or nodo.get('title', ''),
-                        "precio_original": float(precio),
-                        "moneda_original": nodo.get('currency') or "USD",
-                        "moneda_normalizada": normalizar_moneda(nodo.get('currency')),
-                        "precio_usd": convertir_a_usd(float(precio), normalizar_moneda(nodo.get('currency'))),
-                        "enlace": f"https://www.revolico.com{nodo.get('permalink', '')}",
-                        "fecha_extraccion": timestamp_busqueda,
-                        "hora_extraccion": hora_busqueda,
-                        "fecha_busqueda": fecha_busqueda,
-                        "categoria": categoria or "general",
-                        "subcategoria": subcategoria or "general",
-                        "fuente": "revolico",
-                        "es_online": True,
-                        "anuncio_id": aid,
-                        "permalink": nodo.get('permalink', '')
-                    })
+                    for ad in ads:
+                        nodo = ad.get('node', {})
+                        aid = nodo.get('id')
+                        precio = nodo.get('price')
+                        
+                        if not aid or aid in ids_vistos: continue
+                        if not precio or precio <= 0: continue
+                        
+                        ids_vistos.add(aid)
+                        articulos_base.append({
+                            "id_busqueda": id_busqueda,
+                            "producto_buscado": termino,
+                            "titulo": nodo.get('title', 'Sin título'),
+                            "descripcion": nodo.get('description') or nodo.get('title', ''),
+                            "precio_original": float(precio),
+                            "moneda_original": nodo.get('currency') or "USD",
+                            "moneda_normalizada": normalizar_moneda(nodo.get('currency')),
+                            "precio_usd": convertir_a_usd(float(precio), normalizar_moneda(nodo.get('currency'))),
+                            "enlace": f"https://www.revolico.com{nodo.get('permalink', '')}",
+                            "fecha_extraccion": timestamp_busqueda,
+                            "hora_extraccion": hora_busqueda,
+                            "fecha_busqueda": fecha_busqueda,
+                            "categoria": categoria or "general",
+                            "subcategoria": subcategoria or "general",
+                            "fuente": "revolico",
+                            "es_online": True,
+                            "anuncio_id": aid,
+                            "permalink": nodo.get('permalink', '')
+                        })
+                    print(f"   📥 [GQL] Pág {p_num}: {len(ads)} anuncios | Total: {len(articulos_base)}")
                 
-                print(f"   📥 Pág {p_num}: {len(ads)} anuncios | Total: {len(articulos_base)}")
-                time.sleep(random.uniform(1.0, 2.0))
+                time.sleep(random.uniform(0.6, 1.4))
                 
             except Exception as e:
                 print(f"   ⚠️ Error en página {p_num}: {str(e)[:50]}")
                 continue
         
-        # OBTENER DESCRIPCIONES (Modo Seguro)
+        # ============================================
+        # FASE 2: OBTENER DESCRIPCIONES COMPLETAS
+        # ============================================
         if articulos_base:
             descripciones = obtener_descripciones_batch(session, articulos_base)
-            
             con_desc_real = 0
             for art in articulos_base:
                 aid = art['anuncio_id']
                 if aid in descripciones and descripciones[aid]:
                     art['descripcion'] = descripciones[aid]
-                    con_desc_real += 1
-                
+                    if len(descripciones[aid]) > 20:
+                        con_desc_real += 1
                 if 'permalink' in art:
                     del art['permalink']
             

@@ -1,16 +1,20 @@
 """
 ================================================================================
-BÚSQUEDA WEB - VERSIÓN V7.7 - SCRAPER NATIVO (REPARACIÓN TOTAL BING/GOOGLE) 
+BÚSQUEDA WEB - VERSIÓN V7.9 - SCRAPER NATIVO (OPTIMIZADO PARA NUBE) 
 ================================================================================
-- Recuperadas todas las listas de sitios originales (300+ líneas)
-- Corregida variable texto_combinado para evitar descarte de resultados
-- Calentamiento de sesión agresivo para Bing en AWS
 """
-import subprocess, json, logging, urllib.parse, re, shutil, time, random
+import subprocess
+import json
+import logging
+import urllib.parse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as crequests
 from typing import List, Dict, Optional
 from datetime import datetime
+import re
+import shutil
+import time
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +69,10 @@ def es_resultado_de_venta(titulo: str, descripcion: str, dominio: str) -> tuple:
     for sitio in SITIOS_CUBANOS:
         if sitio in dominio_lower: return (True, "Sitio clasificado")
         
-    palabras_venta_encontradas = [pv for pv in PALABRAS_VENTA if pv in texto_combinado]
+    palabras_venta_encontradas = [pv for pv in PALABRAS_VENTA if pv in texto_combined if 'texto_combined' in locals() else texto_combinado]
     if len(palabras_venta_encontradas) >= 2: return (True, "Múltiples palabras venta")
     
+    # CORREGIDO: Uso de texto_combinado únicamente
     if re.search(r'\$[\d,.]+|\d+[\d,.]*\s*(?:usd|mlc|cup|eur)', texto_combinado, re.I):
         return (True, "Contiene precio textual")
         
@@ -84,7 +89,7 @@ def _scraper_nativo_bing(termino: str, num_resultados: int) -> List[Dict]:
     
     headers_bing = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "es-ES,es;q=0.9",
         "Referer": "https://www.bing.com/",
         "Connection": "keep-alive"
@@ -96,46 +101,51 @@ def _scraper_nativo_bing(termino: str, num_resultados: int) -> List[Dict]:
     ]
     
     with crequests.Session() as session:
-        # Calentamiento agresivo
+        # Calentamiento
         try:
             session.get("https://www.bing.com/", headers=headers_bing, impersonate="chrome120", timeout=15)
-            time.sleep(3.0)
+            time.sleep(2.0)
         except: pass
 
         for term in terminos_busqueda:
-            try:
-                url = f"https://www.bing.com/search?q={urllib.parse.quote(term)}"
-                r = session.get(url, headers=headers_bing, impersonate="chrome120", timeout=45)
-                if r.status_code != 200: continue
+            for intento in range(2): 
+                try:
+                    url = f"https://www.bing.com/search?q={urllib.parse.quote(term)}"
+                    r = session.get(url, headers=headers_bing, impersonate="chrome120", timeout=45)
+                    
+                    if r.status_code != 200:
+                        continue
 
-                soup = BeautifulSoup(r.text, 'html.parser')
-                for li in soup.find_all('li', class_='b_algo'):
-                    h2 = li.find('h2')
-                    if not h2: continue
-                    a = h2.find('a')
-                    if not a: continue
-                    
-                    link = a.get('href', '')
-                    titulo = a.get_text(strip=True)
-                    p = li.find('p')
-                    descripcion = p.get_text(strip=True) if p else ""
-                    
-                    if link and link not in urls_vistas:
-                        try: dominio = urllib.parse.urlparse(link).netloc.lower()
-                        except: dominio = ""
-                        if any(exc in dominio or exc in link.lower() for exc in SITIOS_EXCLUIDOS): continue
+                    soup = BeautifulSoup(r.text, 'html.parser')
+                    for li in soup.find_all('li', class_='b_algo'):
+                        h2 = li.find('h2')
+                        if not h2: continue
+                        a = h2.find('a')
+                        if not a: continue
                         
-                        es_venta, motivo = es_resultado_de_venta(titulo, descripcion, dominio)
-                        if es_venta:
-                            urls_vistas.add(link)
-                            es_cubano = any(site in dominio for site in SITIOS_CUBANOS)
-                            resultados.append({
-                                "titulo": titulo, "url": link, "descripcion": descripcion,
-                                "dominio": dominio, "fecha": "", "es_cubano": es_cubano,
-                                "prioridad": 3 if es_cubano else 2
-                            })
-                time.sleep(2.0)
-            except: continue
+                        link = a.get('href', '')
+                        titulo = a.get_text(strip=True)
+                        p = li.find('p')
+                        descripcion = p.get_text(strip=True) if p else ""
+                        
+                        if link and link not in urls_vistas:
+                            try: dominio = urllib.parse.urlparse(link).netloc.lower()
+                            except: dominio = ""
+                            if any(exc in dominio or exc in link.lower() for exc in SITIOS_EXCLUIDOS): continue
+                            
+                            es_venta, motivo = es_resultado_de_venta(titulo, descripcion, dominio)
+                            if es_venta:
+                                urls_vistas.add(link)
+                                es_cubano = any(site in dominio for site in SITIOS_CUBANOS)
+                                resultados.append({
+                                    "titulo": titulo, "url": link, "descripcion": descripcion,
+                                    "dominio": dominio, "fecha": "", "es_cubano": es_cubano,
+                                    "prioridad": 3 if es_cubano else 2
+                                })
+                    break 
+                except Exception:
+                    time.sleep(random.uniform(2.0, 4.0))
+            
     return resultados
 
 def buscar_en_google(termino: str, num_resultados: int = 15) -> List[Dict]:
