@@ -1,6 +1,6 @@
 """
 ================================================================================
-SCRAPER REVOLICO V41.0 - DESCRIPCIONES COMPLETAS (GRAPHQL + HTML FALLBACK)
+SCRAPER REVOLICO V41.3 - DESCRIPCIONES COMPLETAS (GRAPHQL + HTML FALLBACK)
 ================================================================================
 - Intenta GraphQL primero para descripciones
 - Si falla, hace scraping del HTML de la página del anuncio
@@ -58,32 +58,6 @@ contadores = {'exitosos': 0, 'fallidos': 0, 'lock': threading.Lock()}
 
 def obtener_descripcion_graphql(session, anuncio_id):
     """Mejorado para manejar errores de esquema en la API."""
-    try:
-        payload = [{
-            "operationName": "AdDetail",
-            "variables": {"id": anuncio_id},
-            "query": QUERY_DETALLE_ANUNCIO
-        }]
-        
-        r = session.post(REVOLICO_API_URL, headers=HEADERS_APOLLO, json=payload, impersonate="chrome120", timeout=REQUEST_TIMEOUT)
-        
-        if r.status_code == 200:
-            data = r.json()
-            res = data[0] if isinstance(data, list) else data
-            ad = res.get('data', {}).get('ad', {})
-            
-            if ad:
-                # Priorizar 'body' sobre 'description'
-                desc = ad.get('body') or ad.get('description') or ""
-                phone = ad.get('phoneInfo', {}).get('firstPhone', {}).get('number', '')
-                
-                if desc:
-                    desc = re.sub(r'\s+', ' ', desc).strip()
-                    return f"{desc} | Tel: {phone}" if phone else desc
-        return None
-    except:
-        return None
-    """Intenta obtener descripción vía GraphQL."""
     try:
         payload = [{
             "operationName": "AdDetail",
@@ -216,7 +190,7 @@ def obtener_descripcion_html(session, anuncio_id, permalink):
             return resultado[:2000]
 
         return None
-    except Exception as e:
+    except Exception:
         return None
 
 def obtener_descripcion_completa(session, anuncio_id, permalink):
@@ -310,7 +284,7 @@ def obtener_descripciones_batch(session, articulos):
 
 
 def obtener_precios_revolico(producto_original=None, categoria=None, subcategoria=None, productos_predefinidos=None, paginas=15) -> list:
-    """Función principal - V41 con descripciones completas (Optimización Nube)."""
+    """Función principal - V41.3 con descripciones completas (Optimización Nube)."""
     
     # Resetear estado
     estado_global['graphql_fallos'] = 0
@@ -327,15 +301,14 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
     ids_vistos = set()
     
     print("\n" + "═" * 80)
-    print(f"║ ⚡ REVOLICO V41.0 - DESCRIPCIONES COMPLETAS (OPTIMIZACIÓN NUBE) ".center(78) + "║")
+    print(f"║ ⚡ REVOLICO V41.3 - DESCRIPCIONES COMPLETAS (OPTIMIZACIÓN NUBE) ".center(78) + "║")
     print("═" * 80 + "\n")
     
     with requests.Session() as session:
         # --- CALENTAMIENTO DE SESIÓN (Vital para servidores en la nube) ---
-        # Entramos a la home primero para obtener cookies de Cloudflare y simular navegación humana
         try:
             session.get("https://www.revolico.com/", headers=HEADERS_HTML, impersonate="chrome120", timeout=15)
-            time.sleep(random.uniform(1.2, 2.5)) 
+            time.sleep(random.uniform(1.5, 3.0)) 
         except: pass
 
         # ============================================
@@ -426,9 +399,7 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                     })
                 
                 print(f"   📥 Pág {p_num}: {len(ads)} anuncios | Total: {len(articulos_base)}")
-                
-                # Pausa aleatoria entre páginas para evitar detección en nube
-                time.sleep(random.uniform(0.6, 1.4))
+                time.sleep(random.uniform(0.8, 1.6))
                 
             except Exception as e:
                 print(f"   ⚠️ Error en página {p_num}: {str(e)[:50]}")
@@ -449,7 +420,6 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                     if len(descripciones[aid]) > 20:
                         con_desc_real += 1
                 
-                # Limpiar permalink temporal
                 if 'permalink' in art:
                     del art['permalink']
             
