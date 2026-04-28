@@ -1,6 +1,6 @@
 """
 ================================================================================
-SCRAPER REVOLICO V41.13 - DESCRIPCIONES COMPLETAS (GRAPHQL + HTML FALLBACK)
+SCRAPER REVOLICO V41.15 - DESCRIPCIONES COMPLETAS (GRAPHQL + HTML FALLBACK)
 ================================================================================
 - Intenta GraphQL primero para descripciones
 - Si falla, hace scraping del HTML de la página del anuncio
@@ -383,6 +383,7 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                         if next_data_script:
                             try:
                                 data_json = json.loads(next_data_script.string)
+                                # Búsqueda de resultados en el JSON
                                 ads_rescate = data_json['props']['pageProps']['results']
                                 for ad in ads_rescate:
                                     aid = ad.get('id')
@@ -391,8 +392,8 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                                     articulos_base.append({
                                         "id_busqueda": id_busqueda,
                                         "producto_buscado": termino,
-                                        "titulo": ad.get('title', 'Sin título'),
-                                        "descripcion": ad.get('description') or ad.get('title', ''),
+                                        "titulo": ad.get('title'),
+                                        "descripcion": ad.get('description') or ad.get('title'),
                                         "precio_original": float(ad.get('price', 0)),
                                         "moneda_original": ad.get('currency', 'USD'),
                                         "moneda_normalizada": normalizar_moneda(ad.get('currency')),
