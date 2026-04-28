@@ -1,6 +1,6 @@
 """
 ================================================================================
-SCRAPER REVOLICO V41.9 - DESCRIPCIONES COMPLETAS (GRAPHQL + HTML FALLBACK)
+SCRAPER REVOLICO V41.13 - DESCRIPCIONES COMPLETAS (GRAPHQL + HTML FALLBACK)
 ================================================================================
 - Intenta GraphQL primero para descripciones
 - Si falla, hace scraping del HTML de la página del anuncio
@@ -19,10 +19,11 @@ from core.currency import normalizar_moneda, convertir_a_usd
 
 # Configuración
 MAX_PRODUCTOS = 1000
-MAX_HILOS = 12
+# Reducido ligeramente para evitar que el servidor de la nube se congele por exceso de hilos
+MAX_HILOS = 4
 REQUEST_TIMEOUT = 30
 
-# Headers para GraphQL (Apollo)
+# Headers para GraphQL (Apollo) - REFORZADOS CON SEÑALES DE NAVEGACIÓN REAL
 HEADERS_APOLLO = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "*/*",
@@ -33,15 +34,19 @@ HEADERS_APOLLO = {
     "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
 }
 
 # Headers para HTML
 HEADERS_HTML = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "es-ES,es;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 # Estado global
@@ -242,6 +247,8 @@ def obtener_descripcion_completa(session, anuncio_id, permalink):
                     print(f"\n   ⚠️ GraphQL bloqueado → Usando HTML para descripciones\n")
     
     # Fallback a HTML
+    # Pequeña pausa aleatoria para no saturar el servidor en batch
+    time.sleep(random.uniform(0.3, 0.8))
     desc = obtener_descripcion_html(session, anuncio_id, permalink)
     if desc:
         return (anuncio_id, desc, "html")
@@ -334,7 +341,7 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
         # --- CALENTAMIENTO DE SESIÓN (Vital para servidores en la nube) ---
         try:
             session.get("https://www.revolico.com/", headers=HEADERS_HTML, impersonate="chrome120", timeout=15)
-            time.sleep(random.uniform(1.2, 2.5)) 
+            time.sleep(random.uniform(1.5, 3.0)) 
         except: pass
 
         # ============================================
@@ -367,25 +374,25 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                 )
                 
                 # --- INTENTO 2: RESCATE POR HTML SI HAY BLOQUEO 403 (NUBE) ---
-                if r.status_code == 403:
-                    print(f"   [RESCATE] Pág {p_num}: Bypass Cloudflare vía HTML...")
-                    r = session.get(f"https://www.revolico.com/busqueda?q={termino}&page={p_num}", headers=HEADERS_HTML, impersonate="chrome120")
-                    if r.status_code == 200:
-                        soup = BeautifulSoup(r.text, 'html.parser')
-                        next_data = soup.find('script', id='__NEXT_DATA__')
-                        if next_data:
-                            data = json.loads(next_data.string)
+                if r.status_code == 403 or r.status_code == 401:
+                    print(f"   [RESCATE] Pág {p_num}: Bypass Cloudflare vía HTML __NEXT_DATA__...")
+                    r_rescate = session.get(f"https://www.revolico.com/busqueda?q={termino}&page={p_num}", headers=HEADERS_HTML, impersonate="chrome120")
+                    if r_rescate.status_code == 200:
+                        soup = BeautifulSoup(r_rescate.text, 'html.parser')
+                        next_data_script = soup.find('script', id='__NEXT_DATA__')
+                        if next_data_script:
                             try:
-                                ads = data['props']['pageProps']['results']
-                                for ad in ads:
+                                data_json = json.loads(next_data_script.string)
+                                ads_rescate = data_json['props']['pageProps']['results']
+                                for ad in ads_rescate:
                                     aid = ad.get('id')
                                     if not aid or aid in ids_vistos: continue
                                     ids_vistos.add(aid)
                                     articulos_base.append({
                                         "id_busqueda": id_busqueda,
                                         "producto_buscado": termino,
-                                        "titulo": ad.get('title'),
-                                        "descripcion": ad.get('description') or ad.get('title'),
+                                        "titulo": ad.get('title', 'Sin título'),
+                                        "descripcion": ad.get('description') or ad.get('title', ''),
                                         "precio_original": float(ad.get('price', 0)),
                                         "moneda_original": ad.get('currency', 'USD'),
                                         "moneda_normalizada": normalizar_moneda(ad.get('currency')),
@@ -394,14 +401,14 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                                         "fecha_extraccion": timestamp_busqueda,
                                         "hora_extraccion": hora_busqueda,
                                         "fecha_busqueda": fecha_busqueda,
-                                        "categoria": categoria,
-                                        "subcategoria": subcategoria,
+                                        "categoria": categoria or "general",
+                                        "subcategoria": subcategoria or "general",
                                         "fuente": "revolico",
                                         "es_online": True,
                                         "anuncio_id": aid,
                                         "permalink": ad.get('permalink', '')
                                     })
-                                print(f"   📥 [HTML] Pág {p_num}: {len(ads)} anuncios extraídos")
+                                print(f"   📥 [HTML] Pág {p_num}: {len(ads_rescate)} anuncios extraídos exitosamente")
                                 continue
                             except: pass
 
@@ -422,11 +429,17 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                         if not precio or precio <= 0: continue
                         
                         ids_vistos.add(aid)
+                        
+                        desc_listado = nodo.get('description') or ""
+                        if desc_listado:
+                            desc_listado = re.sub(r'<[^>]+>', ' ', str(desc_listado))
+                            desc_listado = re.sub(r'\s+', ' ', desc_listado).strip()
+                        
                         articulos_base.append({
                             "id_busqueda": id_busqueda,
                             "producto_buscado": termino,
                             "titulo": nodo.get('title', 'Sin título'),
-                            "descripcion": nodo.get('description') or nodo.get('title', ''),
+                            "descripcion": desc_listado or nodo.get('title', ''),
                             "precio_original": float(precio),
                             "moneda_original": nodo.get('currency') or "USD",
                             "moneda_normalizada": normalizar_moneda(nodo.get('currency')),
@@ -444,7 +457,7 @@ def obtener_precios_revolico(producto_original=None, categoria=None, subcategori
                         })
                     print(f"   📥 [GQL] Pág {p_num}: {len(ads)} anuncios | Total: {len(articulos_base)}")
                 
-                time.sleep(random.uniform(0.6, 1.4))
+                time.sleep(random.uniform(0.8, 1.8))
                 
             except Exception as e:
                 print(f"   ⚠️ Error en página {p_num}: {str(e)[:50]}")
