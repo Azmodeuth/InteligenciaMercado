@@ -1,6 +1,6 @@
 """
 ================================================================================
-SERVICIO DE BÚSQUEDA - VERSIÓN 11.2 (SESIÓN UNIFICADA)
+SERVICIO DE BÚSQUEDA - VERSIÓN 11.4 (SISTEMA DE REFRESCO TOTAL)
 ================================================================================
 """
 import streamlit as st
@@ -89,10 +89,12 @@ def busqueda_profunda(subcategoria: str, termino: str, categoria: str = "electro
     id_sesion = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     with st.spinner("🌐 Ejecutando Inteligencia Profunda de Mercado..."):
+        # 1. REVOLICO
         articulos_revolico = obtener_precios_revolico(producto_original=termino_final, categoria=categoria, subcategoria=subcategoria, paginas=15)
         for art in articulos_revolico: art['es_online'] = True
         if articulos_revolico: st.info(f"📦 Revolico: {len(articulos_revolico)} anuncios extraídos.")
         
+        # 2. MULTI-FUENTE (Voypati, El Yerro, Fadiar, etc.)
         extras =[]
         try:
             agregador = obtener_agregador()
@@ -102,6 +104,7 @@ def busqueda_profunda(subcategoria: str, termino: str, categoria: str = "electro
             if extras: st.info(f"📦 Multi-fuente: {len(extras)} anuncios consolidados.")
         except Exception: pass
         
+        # 3. GOOGLE/BING
         articulos_google =[]
         try:
             resultados_google = buscar_google_directo(termino_final, num_resultados=12)
@@ -110,8 +113,10 @@ def busqueda_profunda(subcategoria: str, termino: str, categoria: str = "electro
         except Exception: pass
     
     pool_online = articulos_revolico + extras + articulos_google
+    
+    # CORRECCIÓN MAESTRA: Si el pool online tiene algo (aunque Revolico sea 0), mostramos resultados
     if pool_online:
-        # SINCRONIZACIÓN DE METADATOS: Aseguramos que todos los 1000+ items compartan el ID y la subcategoría
+        # SINCRONIZACIÓN DE METADATOS: Aseguramos que todos los items compartan el ID y la subcategoría
         for art in pool_online:
             art['id_busqueda'] = id_sesion
             art['producto_buscado'] = termino_final
@@ -129,6 +134,9 @@ def busqueda_profunda(subcategoria: str, termino: str, categoria: str = "electro
         
         guardar_historial_busqueda(id_sesion, termino_final, categoria, subcategoria, 'profunda', analisis)
         guardar_fluctuacion(termino_final, categoria, subcategoria, analisis)
+        
+        # RETORNAR SIEMPRE TRUE SI HAY AL MENOS UN RESULTADO ONLINE
         return True, todos_para_analizar, analisis
     
+    # Si todo falla realmente (0 resultados en todas las fuentes online)
     return False, [], {}
